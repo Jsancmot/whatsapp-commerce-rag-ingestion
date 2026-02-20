@@ -1,0 +1,43 @@
+# Standalone compose for local development of the ingestion service.
+# The DB service mirrors the one in whatsapp-commerce-backend so both
+# can share the same postgres_data volume when run together.
+#
+# To run alongside the backend, point DATABASE_URL to the backend's DB container.
+
+services:
+  ingestion:
+    build: .
+    container_name: whatsapp_saas_rag_ingestion
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/whatsapp_commerce
+    # Override CMD to force re-indexing on each run (useful in development)
+    # command: ["python", "-m", "ingestion.main", "--force"]
+    depends_on:
+      - db
+    networks:
+      - rag_network
+    # This is a one-shot job - it exits after the pipeline finishes.
+    restart: "no"
+
+  db:
+    image: ankane/pgvector:v0.5.1
+    container_name: whatsapp_saas_db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=whatsapp_commerce
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - rag_network
+
+networks:
+  rag_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
