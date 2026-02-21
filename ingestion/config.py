@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     # Scheduler: 0 = run once and exit, N = loop every N minutes
     SCHEDULE_INTERVAL_MINUTES: int = 0
 
+    # Multi-source: also index StoreSetting rows from the backend DB
+    INGEST_STORE_SETTINGS: bool = True
+
+    # HTTP API (event-driven mode)
+    # Set API_ENABLED=true to expose a FastAPI server that the backend can call
+    # to trigger a targeted re-index when a product changes.
+    API_ENABLED: bool = False
+    API_HOST: str = "0.0.0.0"
+    API_PORT: int = 8001
+
     @property
     def is_local(self) -> bool:
         return self.ENVIRONMENT.upper() == "LOCAL"
@@ -31,9 +41,7 @@ class Settings(BaseSettings):
     @property
     def async_database_url(self) -> str:
         """asyncpg driver URL for langchain-postgres async mode."""
-        return self.DATABASE_URL.replace(
-            "postgresql://", "postgresql+asyncpg://"
-        )
+        return self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
 
 
 settings = Settings()

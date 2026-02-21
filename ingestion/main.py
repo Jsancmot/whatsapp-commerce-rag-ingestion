@@ -1,17 +1,25 @@
 """
 Entrypoint for the RAG ingestion service.
 
-Modes (controlled via SCHEDULE_INTERVAL_MINUTES env var):
-  - 0 (default) -> run once and exit (ideal for Kubernetes CronJob or one-shot Docker)
-  - N > 0       -> loop every N minutes (long-running container / sidecar)
+Two execution modes (can be combined):
+
+  SCHEDULER MODE (default):
+    SCHEDULE_INTERVAL_MINUTES=0  → run once and exit (ideal for K8s CronJob / one-shot Docker)
+    SCHEDULE_INTERVAL_MINUTES=N  → loop every N minutes (long-running container / sidecar)
+
+  API MODE (event-driven):
+    API_ENABLED=true → start a FastAPI server so the backend can trigger targeted
+                       re-indexing immediately after product CRUD operations.
+                       Can run alongside the scheduler or standalone.
 
 CLI flags:
-  --force   -> skip the emptiness check and always re-index
+  --force   → skip sync state and re-index every product from scratch
+  --api     → override API_ENABLED=true via CLI (useful for local dev)
 """
+
 import asyncio
 import logging
 import sys
-import time
 
 from ingestion.config import settings
 from ingestion.pipeline import run_pipeline
@@ -23,21 +31,66 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def main(force: bool = False) -> None:
+async def run_scheduler(force: bool = False) -> None:
+    """Run the pipeline once or on a recurring schedule."""
     interval = settings.SCHEDULE_INTERVAL_MINUTES
 
     if interval == 0:
         logger.info("[main] Running pipeline once (SCHEDULE_INTERVAL_MINUTES=0).")
-        await run_pipeline(force=force)
-        logger.info("[main] Done.")
+        summary = await run_pipeline(force=force)
+        logger.info(f"[main] Done. Summary: {summary}")
     else:
         logger.info(f"[main] Running pipeline every {interval} minutes.")
         while True:
-            await run_pipeline(force=force)
-            logger.info(f"[main] Next run in {interval} minutes...")
-            time.sleep(interval * 60)
+            summary = await run_pipeline(force=force)
+            logger.info(
+                f"[main] Cycle done. Summary: {summary}. Next run in {interval} minutes..."
+            )
+            # Use asyncio.sleep so the API server stays responsive during the wait
+            await asyncio.sleep(interval * 60)
+
+
+async def run_api_server() -> None:
+    """Start the FastAPI event-driven ingestion server."""
+    import uvicorn
+    from ingestion.api import app
+
+    config = uvicorn.Config(
+        app=app,
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        log_level="info",
+    )
+    server = uvicorn.Server(config)
+    logger.info(
+        f"[main] Starting ingestion API on {settings.API_HOST}:{settings.API_PORT}"
+    )
+    await server.serve()
+
+
+async def main(force: bool = False, api_enabled: bool = False) -> None:
+    tasks = []
+
+    if settings.SCHEDULE_INTERVAL_MINUTES == 0 and not api_enabled:
+        # Simple one-shot mode: run pipeline and exit
+        await run_scheduler(force=force)
+        return
+
+    # One or both of scheduler + API server run concurrently
+    if settings.SCHEDULE_INTERVAL_MINUTES > 0:
+        tasks.append(asyncio.create_task(run_scheduler(force=force)))
+
+    if api_enabled or settings.API_ENABLED:
+        tasks.append(asyncio.create_task(run_api_server()))
+
+    if tasks:
+        await asyncio.gather(*tasks)
+    else:
+        # Fallback: just run once
+        await run_scheduler(force=force)
 
 
 if __name__ == "__main__":
     force_flag = "--force" in sys.argv
-    asyncio.run(main(force=force_flag))
+    api_flag = "--api" in sys.argv or settings.API_ENABLED
+    asyncio.run(main(force=force_flag, api_enabled=api_flag))
