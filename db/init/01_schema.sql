@@ -11,9 +11,11 @@ CREATE TABLE IF NOT EXISTS product (
     description TEXT NOT NULL,
     price       FLOAT NOT NULL,
     category    TEXT NOT NULL,
+    image_url   TEXT,
     stock       INTEGER NOT NULL DEFAULT 100,
     is_available BOOLEAN NOT NULL DEFAULT TRUE,
     version     INTEGER NOT NULL DEFAULT 1,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
