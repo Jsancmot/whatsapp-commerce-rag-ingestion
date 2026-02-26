@@ -29,6 +29,7 @@ from ingestion.chunking import chunk_products, chunk_store_settings, Document
 from ingestion.config import settings
 from ingestion.embeddings import get_embeddings
 from ingestion.models import IngestionSyncState, Product
+from ingestion.models_store import StoreSetting
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +131,17 @@ async def run_pipeline(force: bool = False, product_id: int | None = None) -> di
     summary = {"added": 0, "updated": 0, "removed": 0, "skipped": 0, "errors": 0}
 
     with Session(engine) as session:
-        # ── Ensure sync state table exists ──────────────────────────────────
-        from sqlmodel import SQLModel
+        # ── Ensure all required tables exist (LOCAL only) ────────────────────
+        # In LOCAL mode the DB is empty, so we create the schema automatically.
+        # In non-LOCAL environments (DEVELOPMENT, PREPRO, PRODUCTION) tables are
+        # managed by the backend's Alembic migrations — we must NOT touch them.
+        if settings.is_local:
+            from sqlmodel import SQLModel
 
-        SQLModel.metadata.create_all(engine, tables=[IngestionSyncState.__table__])
+            SQLModel.metadata.create_all(engine)
+            logger.debug(
+                "[pipeline] LOCAL mode: ensured all tables exist via create_all."
+            )
 
         # ── 1. Fetch active products from SQL ────────────────────────────────
         stmt = select(Product).where(Product.is_available == True)  # noqa: E712
@@ -240,8 +248,6 @@ async def _ingest_store_settings(engine, embeddings, vector_store: PGVector) -> 
     (e.g. "setting-{key}") which PGVector will replace on re-run.
     """
     try:
-        from ingestion.models_store import StoreSetting  # lazy import
-
         with Session(engine) as session:
             settings_rows = session.exec(select(StoreSetting)).all()
 

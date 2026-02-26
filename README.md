@@ -1,81 +1,167 @@
-# whatsapp-commerce-rag-ingestion
+# 🍏 WhatsApp Commerce RAG Ingestion Pipeline
 
-RAG ingestion pipeline for [WhatsApp Commerce SaaS](https://github.com/Jsancmot/whatsapp-commerce-backend).
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+[![Docker](https://img.shields.io/badge/docker-enabled-blue.svg)](https://www.docker.com/)
+[![PGVector](https://img.shields.io/badge/pgvector-0.5.1-green.svg)](https://github.com/pgvector/pgvector)
+[![OpenAI](https://img.shields.io/badge/OpenAI-text--embedding--3--small-orange.svg)](https://openai.com/)
 
-This service synchronizes the company's **product catalog** from PostgreSQL into a **PGVector** vector store, enabling semantic search for the WhatsApp chatbot. It performs an **incremental sync** (only processes changes) to minimize embedding costs.
+The **Intelligent Brain** for [WhatsApp Commerce SaaS](https://github.com/Jsancmot/whatsapp-commerce-backend). 
 
-The backend service (`whatsapp-commerce-backend`) only **reads** the vector store. This service is the only writer.
+This service synchronizes the company's product catalog from PostgreSQL into a **PGVector** store, enabling lightning-fast **semantic search** for the WhatsApp chatbot. It uses a sophisticated **incremental synchronization** strategy to keep embeddings up-to-date while minimizing API costs.
 
-## Architecture
+---
 
+## 🏗️ System Architecture
+
+The ingestion pipeline acts as the sole **writer** for the vector store, while the backend service remains a **read-only** consumer. This separates the heavy computational task of embedding generation from the real-time chat logic.
+
+```mermaid
+graph LR
+    subgraph "Source"
+        DB[(PostgreSQL)]
+    end
+
+    subgraph "Ingestion Pipeline (This Repo)"
+        Sync[Incremental Sync]
+        AI[Embedding Engine]
+        Sync --> AI
+    end
+
+    subgraph "Storage"
+        VS[(PGVector)]
+    end
+
+    subgraph "Backend Service"
+        Chat[WhatsApp Chatbot]
+    end
+
+    DB -- Fetch Products --> Sync
+    AI -- Upsert Vectors --> VS
+    VS -- Semantic Search --> Chat
 ```
-[this service]        [whatsapp-commerce-backend]
-   WRITE  -------------------------  READ
-             PostgreSQL + pgvector
-```
 
-## Execution Modes
+---
 
-| Mode | Config | Description |
+## ✨ Key Features
+
+- **🚀 Incremental Synchronization**: Only processes new or modified products. Uses a 3-way diff between SQL, Sync State, and Vector Store.
+- **⚡ Event-Driven Triggering**: Optional FastAPI server allows the backend to notify the pipeline for immediate re-indexing when a product is edited.
+- **🍏 Cost-Efficient Embeddings**: Uses OpenAI's `text-embedding-3-small` in production for high performance at a fraction of the cost.
+- **🛠️ Local-First Development**: Seamlessly switches to **Ollama** (`nomic-embed-text`) for local development, providing a $0 cost environment.
+- **🧪 Idempotent Operations**: Uses deterministic Document IDs to prevent duplicates and ensure consistency even after failures.
+
+---
+
+## ⏱️ Execution Modes
+
+| Mode | Environment Variable | Best For |
 |---|---|---|
-| **One-Shot** | `SCHEDULE_INTERVAL_MINUTES=0` | Runs once and exits. Ideal for CronJobs. |
-| **Scheduler** | `SCHEDULE_INTERVAL_MINUTES=N` | Keeps running, syncing every N minutes. |
-| **API (Event-Driven)** | `API_ENABLED=true` | Starts a FastAPI server (port 8001) so the backend can trigger immediate re-indexing after a product is edited. |
+| **One-Shot** | `SCHEDULE_INTERVAL_MINUTES=0` | CI/CD, CronJobs, or manual runs. |
+| **Scheduler** | `SCHEDULE_INTERVAL_MINUTES=N` | Background polling of the DB for changes. |
+| **Active Listener** | `API_ENABLED=true` | Real-time updates triggered via POST requests from the backend. |
 
-## Quickstart
+---
 
-```bash
-# 1. Copy and edit the env file
-cp .env.example .env
-# Set DATABASE_URL, OPENAI_API_KEY (if non-LOCAL), etc.
+## 🚀 Quickstart
 
-# 2. Run the ingestion pipeline (one-shot)
-docker compose up --build
-# The db service will start first and become healthy before the ingestion pipeline runs.
+1.  **Configure Environment**:
+    ```bash
+    cp .env.example .env
+    # Edit .env — key settings:
+    #   ENVIRONMENT=LOCAL        → uses Ollama (free, no API key needed)
+    #   ENVIRONMENT=DEVELOPMENT  → uses OpenAI (requires OPENAI_API_KEY)
+    ```
 
-# 3. Force full re-indexing (discards all existing vectors and re-generates them)
-# Edit docker-compose.yml and uncomment the --force command, then:
-docker compose up --build
-```
+    > **LOCAL mode prerequisite**: Ollama must be running on your host machine
+    > *before* starting Docker. Pull the embedding model once:
+    > ```bash
+    > ollama pull nomic-embed-text
+    > ```
 
-> **Note:** When using Docker Compose, the `db` service starts first and exposes a healthcheck (`pg_isready`). The `ingestion` service only starts once the database is confirmed healthy, preventing connection errors on startup.
+2.  **Start with Docker**:
+    The pipeline includes a health-checked PostgreSQL with `pgvector` pre-installed.
+    ```bash
+    docker compose up --build
+    ```
 
-## Environment Variables
+3.  **Force Full Re-index**:
+    If you change embedding models or want to clear the store:
+    ```bash
+    # Uncomment the --force command in docker-compose.yml or run:
+    docker compose run ingestion python -m ingestion.main --force
+    ```
 
+---
+
+## ⚙️ Configuration Reference
+
+### Core Settings
 | Variable | Default | Description |
 |---|---|---|
-| `ENVIRONMENT` | `LOCAL` | `LOCAL` / `DEVELOPMENT` / `PREPRO` / `PRODUCTION` |
-| `DATABASE_URL` | `postgresql://...@db:5432/...` | PostgreSQL connection string (source of truth for products) |
-| `OPENAI_API_KEY` | `` | Required in non-LOCAL environments |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama host (LOCAL only) |
-| `OLLAMA_MODEL` | `llama3.2` | Ollama model for chat/general language (LOCAL only) |
-| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Ollama model specifically for embeddings (LOCAL only) |
-| `COLLECTION_NAME` | `whatsapp_commerce_rag` | pgvector collection name |
-| `SCHEDULE_INTERVAL_MINUTES` | `0` | `0` = run once; `N` = loop every N mins |
-| `INGEST_STORE_SETTINGS` | `true` | Also index store settings rows alongside products |
-| `API_ENABLED` | `false` | Set to `true` to enable the event-driven FastAPI server |
-| `API_HOST` | `0.0.0.0` | Host for the API server |
-| `API_PORT` | `8001` | Port for the API server |
+| `ENVIRONMENT` | `LOCAL` | `LOCAL`, `DEVELOPMENT`, `PRODUCTION`. |
+| `DATABASE_URL` | - | PostgreSQL connection string. |
+| `COLLECTION_NAME` | `whatsapp_commerce_rag` | Dedicated collection name in PGVector. |
 
-## Embedding Models
+### AI & Models
+| Variable | Default | Description |
+|---|---|---|
+| `OPENAI_API_KEY` | - | Required for non-LOCAL environments. |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Your local Ollama instance URL. |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Model for local embeddings ($0 cost). |
 
-| Environment | Provider | Model | Cost |
-|---|---|---|---|
-| `LOCAL` | Ollama (local) | `nomic-embed-text` (configurable via `OLLAMA_EMBED_MODEL`) | Free |
-| All others | OpenAI | `text-embedding-3-small` | ~$0.02 / 1M tokens |
+### Triggering & Pipeline
+| Variable | Default | Description |
+|---|---|---|
+| `SCHEDULE_INTERVAL_MINUTES` | `0` | If > 0, the service polls for changes. |
+| `API_ENABLED` | `false` | Enables the FastAPI server on port 8001. |
+| `INGEST_STORE_SETTINGS` | `true` | Also index store FAQs and general info. |
 
-> **⚠️ Important:** Vectors generated by Ollama are **not compatible** with OpenAI vectors. If you switch environments, run with `--force` to regenerate all embeddings from scratch.
+---
 
-## Documentation
+## 🧪 Embedding Strategy
 
-- 📊 [Pipeline Flow Diagram](docs/flow_rag_ingestion.excalidraw) — visual overview of the ingestion workflow
-- 📄 [Step-by-Step Explanation](docs/flow_rag_ingestion.md) — detailed documentation of every step
+| Environment | Provider | Model | Precision | Cost |
+|---|---|---|---|---|
+| **Local** | Ollama | `nomic-embed-text` | High | Free |
+| **Production** | OpenAI | `text-embedding-3-small` | State-of-the-Art | ~$0.02 / 1M tokens |
 
-## Improving the RAG
+> [!CAUTION]
+> **Vector Incompatibility**: Embeddings from Ollama and OpenAI are not interchangeable. Switching providers requires a full re-index using the `--force` flag.
 
-The main areas to iterate on are in `ingestion/chunking.py`:
-- Change chunk strategy (sliding window, semantic splitting)
-- Add new document sources (FAQ, store info, promotions)
-- Tune chunk size and overlap
+---
 
-Embedding model changes go in `ingestion/embeddings.py`.
+## 🔧 Troubleshooting
+
+### `Failed to connect to Ollama` in LOCAL mode
+
+This error means the ingestion container can't reach Ollama on your host machine.
+
+| Check | Command |
+|---|---|
+| Ollama is running | `curl http://localhost:11434` → should return `Ollama is running` |
+| Model is downloaded | `ollama list` → should include `nomic-embed-text` |
+| Docker can reach host | `docker run --rm curlimages/curl curl http://host.docker.internal:11434` |
+
+The most common cause is a **timing issue**: the container starts before Ollama has fully loaded the model into memory. Simply re-running `docker compose up` usually resolves it.
+
+---
+
+## 📖 Deep Dive Documentation
+
+- 📊 [**Pipeline Flow Diagram**](docs/flow_rag_ingestion.excalidraw) — Visual breakdown of the logic.
+- 📄 [**Step-by-Step Explanation**](docs/flow_rag_ingestion.md) — Detailed technical deep dive into every pipeline stage (from diff calculation to idempotent upserts).
+
+---
+
+## 🛠️ Development & Iteration
+
+Most logic is found in the `ingestion/` directory:
+- `pipeline.py`: Main orchestration logic.
+- `chunking.py`: Customize how product text is grouped (sliding window vs. semantic).
+- `embeddings.py`: Manage AI provider configurations.
+- `main.py`: Entrypoint and execution mode handling.
+
+---
+
+*Built with ❤️ for the WhatsApp Commerce Ecosystem.*
+

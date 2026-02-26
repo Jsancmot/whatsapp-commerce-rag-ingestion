@@ -1,8 +1,17 @@
-# Standalone compose for local development of the ingestion service.
-# The DB service mirrors the one in whatsapp-commerce-backend so both
-# can share the same postgres_data volume when run together.
+# Standalone compose for the RAG ingestion service.
 #
-# To run alongside the backend, point DATABASE_URL to the backend's DB container.
+# This service is fully self-contained:
+#   - Spins up its own PostgreSQL + pgvector instance.
+#   - The pipeline creates all required tables on startup (product,
+#     storesetting, ingestion_sync_state) if they don't exist yet.
+#   - Add seed data via the API or directly via psql/pgAdmin.
+#
+# Usage:
+#   docker compose up             # run pipeline once and exit
+#   docker compose up --build     # rebuild image before running
+#
+# To force a full re-index (ignore sync state):
+#   Uncomment the `command` override below.
 
 services:
   ingestion:
@@ -12,14 +21,14 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/whatsapp_commerce
-    # Override CMD to force re-indexing on each run (useful in development)
+    # Uncomment to force re-indexing on each run (useful in development):
     # command: ["python", "-m", "ingestion.main", "--force"]
     depends_on:
       db:
-        condition: service_healthy # Wait until PostgreSQL is truly ready
+        condition: service_healthy
     networks:
       - rag_network
-    # This is a one-shot job - it exits after the pipeline finishes.
+    # This is a one-shot job — it exits after the pipeline finishes.
     restart: "no"
 
   db:
@@ -33,14 +42,18 @@ services:
       - POSTGRES_DB=whatsapp_commerce
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Init scripts run once on first start (when volume is empty), in alphabetical order:
+      #   01_schema.sql → creates tables
+      #   02_seed.sql   → inserts sample data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     networks:
       - rag_network
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres -d whatsapp_commerce" ]
-      interval: 5s # Check every 5 seconds
-      timeout: 5s # Fail if no response in 5 seconds
-      retries: 10 # Retry up to 10 times before declaring unhealthy
-      start_period: 10s # Give PostgreSQL 10 seconds to boot before health checks begin
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
 networks:
   rag_network:
