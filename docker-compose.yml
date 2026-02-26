@@ -15,7 +15,8 @@ services:
     # Override CMD to force re-indexing on each run (useful in development)
     # command: ["python", "-m", "ingestion.main", "--force"]
     depends_on:
-      - db
+      db:
+        condition: service_healthy # Wait until PostgreSQL is truly ready
     networks:
       - rag_network
     # This is a one-shot job - it exits after the pipeline finishes.
@@ -34,6 +35,12 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - rag_network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d whatsapp_commerce" ]
+      interval: 5s # Check every 5 seconds
+      timeout: 5s # Fail if no response in 5 seconds
+      retries: 10 # Retry up to 10 times before declaring unhealthy
+      start_period: 10s # Give PostgreSQL 10 seconds to boot before health checks begin
 
 networks:
   rag_network:

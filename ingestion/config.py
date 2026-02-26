@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Ollama (LOCAL environment)
     OLLAMA_BASE_URL: str = "http://host.docker.internal:11434"
     OLLAMA_MODEL: str = "llama3.2"
+    OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
 
     # Vector store
     COLLECTION_NAME: str = "whatsapp_commerce_rag"
