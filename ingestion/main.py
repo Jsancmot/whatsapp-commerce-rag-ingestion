@@ -69,6 +69,13 @@ async def run_api_server() -> None:
 
 
 async def main(force: bool = False, api_enabled: bool = False) -> None:
+    # Pre-flight health check
+    from ingestion.embeddings import verify_embeddings_health
+
+    if not await verify_embeddings_health():
+        logger.error("[main] Pre-flight health check failed. Exiting.")
+        sys.exit(1)
+
     tasks = []
 
     if settings.SCHEDULE_INTERVAL_MINUTES == 0 and not api_enabled:
