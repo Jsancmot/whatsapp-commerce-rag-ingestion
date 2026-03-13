@@ -24,3 +24,8 @@ env/
 
 # Logs
 *.log
+
+# Agents (managed at monorepo root)
+.agent/
+.agents/
+skills-lock.json
