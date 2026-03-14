@@ -1,7 +1,7 @@
 """
 Entrypoint for the RAG ingestion service.
 
-Two execution modes (can be combined):
+Three execution modes (can be combined):
 
   SCHEDULER MODE (default):
     SCHEDULE_INTERVAL_MINUTES=0  → run once and exit (ideal for K8s CronJob / one-shot Docker)
@@ -12,9 +12,14 @@ Two execution modes (can be combined):
                        re-indexing immediately after product CRUD operations.
                        Can run alongside the scheduler or standalone.
 
+  WORKER MODE (Redis queue):
+    WORKER_ENABLED=true → start a Redis worker that listens for product change events
+                         and triggers re-indexing automatically.
+
 CLI flags:
   --force   → skip sync state and re-index every product from scratch
   --api     → override API_ENABLED=true via CLI (useful for local dev)
+  --worker  → override WORKER_ENABLED=true via CLI
 """
 
 import asyncio
@@ -46,7 +51,6 @@ async def run_scheduler(force: bool = False) -> None:
             logger.info(
                 f"[main] Cycle done. Summary: {summary}. Next run in {interval} minutes..."
             )
-            # Use asyncio.sleep so the API server stays responsive during the wait
             await asyncio.sleep(interval * 60)
 
 
@@ -68,7 +72,14 @@ async def run_api_server() -> None:
     await server.serve()
 
 
-async def main(force: bool = False, api_enabled: bool = False) -> None:
+async def run_worker() -> None:
+    """Start the Redis worker for event-driven updates."""
+    from ingestion.worker import main as worker_main
+    logger.info("[main] Starting Redis worker...")
+    await worker_main()
+
+
+async def main(force: bool = False, api_enabled: bool = False, worker_enabled: bool = False) -> None:
     # Pre-flight health check
     from ingestion.embeddings import verify_embeddings_health
 
@@ -78,17 +89,20 @@ async def main(force: bool = False, api_enabled: bool = False) -> None:
 
     tasks = []
 
-    if settings.SCHEDULE_INTERVAL_MINUTES == 0 and not api_enabled:
+    if settings.SCHEDULE_INTERVAL_MINUTES == 0 and not api_enabled and not worker_enabled:
         # Simple one-shot mode: run pipeline and exit
         await run_scheduler(force=force)
         return
 
-    # One or both of scheduler + API server run concurrently
+    # One or more of scheduler + API server + worker run concurrently
     if settings.SCHEDULE_INTERVAL_MINUTES > 0:
         tasks.append(asyncio.create_task(run_scheduler(force=force)))
 
     if api_enabled or settings.API_ENABLED:
         tasks.append(asyncio.create_task(run_api_server()))
+
+    if worker_enabled or settings.WORKER_ENABLED:
+        tasks.append(asyncio.create_task(run_worker()))
 
     if tasks:
         await asyncio.gather(*tasks)
@@ -100,4 +114,5 @@ async def main(force: bool = False, api_enabled: bool = False) -> None:
 if __name__ == "__main__":
     force_flag = "--force" in sys.argv
     api_flag = "--api" in sys.argv or settings.API_ENABLED
-    asyncio.run(main(force=force_flag, api_enabled=api_flag))
+    worker_flag = "--worker" in sys.argv or settings.WORKER_ENABLED
+    asyncio.run(main(force=force_flag, api_enabled=api_flag, worker_enabled=worker_flag))
