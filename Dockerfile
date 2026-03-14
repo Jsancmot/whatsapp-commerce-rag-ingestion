@@ -1,20 +1,16 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies for psycopg2
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
 COPY pyproject.toml .
 RUN pip install --no-cache-dir --upgrade pip setuptools && \
     pip install --no-cache-dir .
 
-# Copy source code
-COPY ingestion/ ingestion/
+COPY app/rag/ ./app/rag/
 
-# Run the pipeline (--force can be passed as CMD override)
-CMD ["python", "-m", "ingestion.main"]
+CMD ["python", "-m", "app.rag.main"]
