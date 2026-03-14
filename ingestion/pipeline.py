@@ -1,5 +1,9 @@
 """
-Main ingestion pipeline — incremental sync edition.
+Ingestion pipeline for RAG-based product search.
+
+This module provides incremental synchronization between the PostgreSQL database
+and the PGVector vector store. It handles product embeddings and store settings
+for the WhatsApp Commerce RAG system.
 
 Flow:
   1. Fetch all active products from PostgreSQL.
@@ -8,8 +12,8 @@ Flow:
        - NEW     → product in SQL but not in sync state → embed and add to sync state.
        - CHANGED → product in SQL AND in sync state, but version increased → delete old
                    embedding + re-embed + update sync state.
-       - REMOVED → product_id in sync state but NOT in active SQL products (disabled or
-                   deleted) → delete embedding + remove from sync state.
+       - REMOVED → product_id in sync state but NOT in active SQL products → delete
+                   embedding + remove from sync state.
        - UNCHANGED → skip (no vector store write, no token cost).
   4. Optionally index StoreSetting rows (store info, FAQ-style data).
 
@@ -135,6 +139,7 @@ async def run_pipeline(force: bool = False, product_id: int | None = None) -> di
         # We always ensure IngestionSyncState exists. In LOCAL/DEVELOPMENT,
         # we can also create other tables if they are missing.
         from sqlmodel import SQLModel
+
         SQLModel.metadata.create_all(engine)
         logger.debug("[pipeline] Ensured all tables exist via create_all.")
 

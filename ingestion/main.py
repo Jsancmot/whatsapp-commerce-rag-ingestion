@@ -26,22 +26,26 @@ import asyncio
 import logging
 import sys
 
-# Configure logging early so it's active during imports
+import uvicorn
+
+from ingestion.api import app
+from ingestion.config import settings
+from ingestion.embeddings import verify_embeddings_health
+from ingestion.pipeline import run_pipeline
+from ingestion.worker import main as worker_main
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-from ingestion.config import settings
-from ingestion.pipeline import run_pipeline
-
 
 async def run_scheduler(force: bool = False) -> None:
     """Run the pipeline on a recurring schedule."""
     interval = settings.SCHEDULE_INTERVAL_MINUTES
     logger.info(f"[main] Starting recurring scheduler every {interval} minutes.")
-    
+
     while True:
         try:
             summary = await run_pipeline(force=force)
@@ -50,15 +54,12 @@ async def run_scheduler(force: bool = False) -> None:
             )
         except Exception as e:
             logger.error(f"[main] Scheduler error: {e}")
-            
+
         await asyncio.sleep(interval * 60)
 
 
 async def run_api_server() -> None:
     """Start the FastAPI event-driven ingestion server."""
-    import uvicorn
-    from ingestion.api import app
-
     config = uvicorn.Config(
         app=app,
         host=settings.API_HOST,
@@ -74,15 +75,14 @@ async def run_api_server() -> None:
 
 async def run_worker() -> None:
     """Start the Redis worker for event-driven updates."""
-    from ingestion.worker import main as worker_main
     logger.info("[main] Starting Redis worker...")
     await worker_main()
 
 
-async def main(force: bool = False, api_enabled: bool = False, worker_enabled: bool = False) -> None:
+async def main(
+    force: bool = False, api_enabled: bool = False, worker_enabled: bool = False
+) -> None:
     # ── 1. Pre-flight health check ──────────────────────────────────────────
-    from ingestion.embeddings import verify_embeddings_health
-
     if not await verify_embeddings_health():
         logger.error("[main] Pre-flight health check failed. Exiting.")
         sys.exit(1)
@@ -97,7 +97,7 @@ async def main(force: bool = False, api_enabled: bool = False, worker_enabled: b
     except Exception as e:
         logger.error(f"[main] Initial sync failed: {e}")
         # We continue anyway if API or worker are enabled, as they might still work
-        # but indexing existing data failed. 
+        # but indexing existing data failed.
 
     # ── 3. Post-sync Execution Modes ─────────────────────────────────────────
     tasks = []
@@ -119,11 +119,15 @@ async def main(force: bool = False, api_enabled: bool = False, worker_enabled: b
         await asyncio.gather(*tasks)
     else:
         # If no background tasks and interval was 0, we already did the sync once, so we exit.
-        logger.info("[main] One-shot sync completed. No persistent tasks enabled. Exiting.")
+        logger.info(
+            "[main] One-shot sync completed. No persistent tasks enabled. Exiting."
+        )
 
 
 if __name__ == "__main__":
     force_flag = "--force" in sys.argv
     api_flag = "--api" in sys.argv or settings.API_ENABLED
     worker_flag = "--worker" in sys.argv or settings.WORKER_ENABLED
-    asyncio.run(main(force=force_flag, api_enabled=api_flag, worker_enabled=worker_flag))
+    asyncio.run(
+        main(force=force_flag, api_enabled=api_flag, worker_enabled=worker_flag)
+    )
