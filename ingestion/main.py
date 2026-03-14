@@ -26,32 +26,32 @@ import asyncio
 import logging
 import sys
 
-from ingestion.config import settings
-from ingestion.pipeline import run_pipeline
-
+# Configure logging early so it's active during imports
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
+from ingestion.config import settings
+from ingestion.pipeline import run_pipeline
+
 
 async def run_scheduler(force: bool = False) -> None:
-    """Run the pipeline once or on a recurring schedule."""
+    """Run the pipeline on a recurring schedule."""
     interval = settings.SCHEDULE_INTERVAL_MINUTES
-
-    if interval == 0:
-        logger.info("[main] Running pipeline once (SCHEDULE_INTERVAL_MINUTES=0).")
-        summary = await run_pipeline(force=force)
-        logger.info(f"[main] Done. Summary: {summary}")
-    else:
-        logger.info(f"[main] Running pipeline every {interval} minutes.")
-        while True:
+    logger.info(f"[main] Starting recurring scheduler every {interval} minutes.")
+    
+    while True:
+        try:
             summary = await run_pipeline(force=force)
             logger.info(
-                f"[main] Cycle done. Summary: {summary}. Next run in {interval} minutes..."
+                f"[main] Scheduler cycle done. Summary: {summary}. Next run in {interval} minutes..."
             )
-            await asyncio.sleep(interval * 60)
+        except Exception as e:
+            logger.error(f"[main] Scheduler error: {e}")
+            
+        await asyncio.sleep(interval * 60)
 
 
 async def run_api_server() -> None:
@@ -80,35 +80,46 @@ async def run_worker() -> None:
 
 
 async def main(force: bool = False, api_enabled: bool = False, worker_enabled: bool = False) -> None:
-    # Pre-flight health check
+    # ── 1. Pre-flight health check ──────────────────────────────────────────
     from ingestion.embeddings import verify_embeddings_health
 
     if not await verify_embeddings_health():
         logger.error("[main] Pre-flight health check failed. Exiting.")
         sys.exit(1)
 
+    # ── 2. Initial Sync ─────────────────────────────────────────────────────
+    # We always run the pipeline once on startup to ensure the vector store
+    # is in sync with the current database state.
+    logger.info("[main] Performing initial sync of database...")
+    try:
+        summary = await run_pipeline(force=force)
+        logger.info(f"[main] Initial sync complete. Summary: {summary}")
+    except Exception as e:
+        logger.error(f"[main] Initial sync failed: {e}")
+        # We continue anyway if API or worker are enabled, as they might still work
+        # but indexing existing data failed. 
+
+    # ── 3. Post-sync Execution Modes ─────────────────────────────────────────
     tasks = []
 
-    if settings.SCHEDULE_INTERVAL_MINUTES == 0 and not api_enabled and not worker_enabled:
-        # Simple one-shot mode: run pipeline and exit
-        await run_scheduler(force=force)
-        return
-
-    # One or more of scheduler + API server + worker run concurrently
+    # A. Recurring Scheduler (if N > 0)
     if settings.SCHEDULE_INTERVAL_MINUTES > 0:
         tasks.append(asyncio.create_task(run_scheduler(force=force)))
 
+    # B. API Server (Event-driven)
     if api_enabled or settings.API_ENABLED:
         tasks.append(asyncio.create_task(run_api_server()))
 
+    # C. Redis Worker (Queue-driven)
     if worker_enabled or settings.WORKER_ENABLED:
         tasks.append(asyncio.create_task(run_worker()))
 
     if tasks:
+        # Run all background services concurrently
         await asyncio.gather(*tasks)
     else:
-        # Fallback: just run once
-        await run_scheduler(force=force)
+        # If no background tasks and interval was 0, we already did the sync once, so we exit.
+        logger.info("[main] One-shot sync completed. No persistent tasks enabled. Exiting.")
 
 
 if __name__ == "__main__":

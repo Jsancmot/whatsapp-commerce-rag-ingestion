@@ -14,18 +14,13 @@ class Settings(BaseSettings):
     # OpenAI (non-LOCAL environments - legacy)
     OPENAI_API_KEY: str = ""
 
-    # Jina AI Embeddings (PRIMARY for non-LOCAL)
+    # Jina AI Embeddings (PRIMARY)
     JINA_API_KEY: str = ""
     JINA_MODEL: str = "jina-embeddings-v3"
 
-    # Ollama (LOCAL environment only)
-    OLLAMA_BASE_URL: str = "http://host.docker.internal:11434"
-    OLLAMA_MODEL: str = "llama3.2"
-    OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
-
     # Embedding provider selection
-    # Use: "jina" (production), "openai" (legacy), "ollama" (local)
-    EMBEDDING_PROVIDER: str = "ollama"
+    # Use: "jina" (primary), "openai" (fallback)
+    EMBEDDING_PROVIDER: str = "jina"
 
     # Redis for event-driven updates
     REDIS_URL: str = "redis://redis:6379/0"
